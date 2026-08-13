@@ -1,0 +1,6 @@
+# Claude Code writes session traces and per-session flags here. They can carry
+# transcript content, so they must never reach a public repo.
+.claude/
+
+# install.sh backs up settings.json next to it before wiring the hook in.
+*.bak-*
