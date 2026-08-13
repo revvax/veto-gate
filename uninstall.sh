@@ -21,6 +21,10 @@ done
 if [ -L "$HOME/.local/bin/veto-gate" ] && [ "$(readlink "$HOME/.local/bin/veto-gate")" = "$TARGET_LIB/veto-gate-cli.sh" ]; then
   rm "$HOME/.local/bin/veto-gate"; echo "✓ entfernt: ~/.local/bin/veto-gate"
 fi
+# Leftover from before the veto2 → veto-gate rename: install.sh stopped creating
+# this link, but an older install still has it. readlink keeps reporting the path
+# after veto2.sh was deleted, so the ownership check still holds and this stays
+# the only thing that clears it.
 if [ -L "$HOME/.local/bin/veto2" ] && [ "$(readlink "$HOME/.local/bin/veto2")" = "$TARGET_LIB/veto2.sh" ]; then
   rm "$HOME/.local/bin/veto2"; echo "✓ entfernt: ~/.local/bin/veto2"
 fi

@@ -96,8 +96,6 @@ if [ -d "$HOME/.local/bin" ]; then
   # (hooks linked, settings.json wired above), so a conflict here is a warning,
   # not a reason to fail the whole install; link() already prints the ⛔ line.
   link "$TARGET_LIB/veto-gate-cli.sh" "$HOME/.local/bin/veto-gate"
-  # transitional wrapper: the pre-rename command name keeps working
-  link "$TARGET_LIB/veto2.sh" "$HOME/.local/bin/veto2"
 else
   echo "ⓘ ~/.local/bin not usable — call it directly: bash $TARGET_LIB/veto-gate-cli.sh"
 fi
