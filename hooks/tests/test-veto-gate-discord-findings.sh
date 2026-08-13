@@ -160,9 +160,38 @@ has "$(printf '%s' "$OUT" | jq -r '.embeds[0].title')" "Nicht gepr" "T-GAP witho
 # The pattern must find the gate script itself: since the rename (veto2-commit-gate.sh is
 # now a symlink to veto-gate.sh) a suite driving the new name would have slipped past this
 # guard — a watchman looking for a man who changed his coat.
+#
+# Naming the gate is not driving it. Comment-ONLY lines drop out before the search:
+# test-veto-ask.sh and test-veto-gate-kreisel.sh drive veto-ask.sh and kreisel.sh —
+# neither script holds a curl or the string DISCORD — and were flagged for one
+# explanatory comment each. The unset those two would have grown guards nothing, and
+# a rule that fires where nothing can go wrong teaches itself away. The tail of a
+# code line is NOT stripped: over-reporting costs a spare line, under-reporting posts
+# fixtures to the owner's phone.
+#
+# One awk, no pipe: `grep -v … | grep -q …` looks equivalent and is not. Under the
+# `pipefail` at the top of this file, grep -q quitting on the first hit kills the
+# feeding grep with SIGPIPE, and the pipeline reports 141 — a file past the ~64 KB
+# pipe buffer would be read as "does not drive the gate" and skipped. Measured on a
+# 264 KB fixture: rc=141. The failure hides in exactly the big suites worth guarding.
+drives_gate(){
+  [ -r "$1" ] || return 0   # unreadable → count it in: a loud FAIL beats a quiet skip
+  awk '/^[[:space:]]*#/ {next} /veto-gate\.sh|notify_discord/ {hit=1; exit} END {exit !hit}' "$1"
+  case $? in 1) return 1;; *) return 0;; esac   # 0 = hit, 1 = clean, anything else = awk broke
+}
+
+PROSE=$(mktemp); CALL=$(mktemp); BIG=$(mktemp)
+printf '#!/usr/bin/env bash\n# how veto-gate.sh fails closed\necho hi\n'   > "$PROSE"
+printf '#!/usr/bin/env bash\nbash "$H/veto-gate.sh" </dev/null\n'          > "$CALL"
+{ cat "$CALL"; for i in $(seq 1 5000); do printf 'echo "filler %s past the pipe buffer"\n' "$i"; done; } > "$BIG"
+ok "$(drives_gate "$PROSE" && echo yes || echo no)" "no"  "T10 a comment naming the gate is not a call"
+ok "$(drives_gate "$CALL"  && echo yes || echo no)" "yes" "T10 …but a real call is still caught"
+ok "$(drives_gate "$BIG"   && echo yes || echo no)" "yes" "T10 …and a big file is not lost to a broken pipe"
+rm -f "$PROSE" "$CALL" "$BIG"
+
 TDIR="$(cd "$(dirname "$0")" && pwd)"
 for t in "$TDIR"/*.sh; do
-  grep -lq 'veto-gate\.sh\|notify_discord' "$t" 2>/dev/null || continue
+  drives_gate "$t" || continue
   [ "$(basename "$t")" = "$(basename "$0")" ] && continue
   if grep -q 'unset DISCORD_VETO_WEBHOOK' "$t"; then P=$((P+1)); else
     F=$((F+1)); echo "  FAIL: $(basename "$t") drives the gate but never unsets DISCORD_VETO_WEBHOOK"
