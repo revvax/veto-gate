@@ -610,8 +610,18 @@ fi
 if [ -n "$PYCFG" ]; then
   # pytest has no import graph to ask "which tests cover these files", the way jest's
   # --findRelatedTests does. Inventing a selection from path names would be a guess dressed as a
-  # proof. So the commit says out loud that it deferred — the same answer the bash repo gives.
-  [ "$SCOPE" = "commit" ] && out skipped "Python-Repo ($PYCFG): pytest kann die betroffenen Tests nicht gezielt auswählen — die Suite läuft beim Push (pre-push)"
+  # proof — so the whole suite runs, at commit as well as at push.
+  #
+  # Until 2026-08-13 the commit said `skipped` here and deferred to the push. Two costs, both
+  # measured: a Python commit could be RED and this gate never noticed, and the reviewer's R09
+  # ("no green run in the bundle") then blocked every Python commit whose only answer was an
+  # override by hand. That is the "gate whose sole answer is override me" this file warns about
+  # a few lines below — it teaches exactly the habit the gate exists to prevent.
+  #
+  # The price is the suite's runtime on every commit (testbau-repo 2026-08-13: 195 s for 2038 tests),
+  # and the bash branch above still defers for the same reason it always did — it has no runner
+  # to cap and no import graph either, but its suites are the gate's OWN and run in pre-push.
+  # A suite that hangs is capped and reads `unavailable`, never green.
 
   # The runner comes from the PROJECT'S OWN environment, never from PATH. Same rule as `npx jest`:
   # a pytest from somewhere else runs against somewhere else's packages, and its green would be
