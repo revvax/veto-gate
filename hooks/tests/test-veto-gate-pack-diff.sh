@@ -396,6 +396,25 @@ ok "$RC" "0" "P-I6 an oversized order does not block"
 ok "$([ -f "$OUT/INTENT.md" ] && echo yes || echo no)" "no" "P-I6 …it stays home"
 ok "$(grep -c 'kein Auftrag' "$OUT/REVIEW_PROMPT.md")" "1" "P-I6 …and the gap is named"
 
+# --- the bundle says what already happened to the TESTS ---------------------
+# The reviewer's rule "a green run must be documented in the bundle" had nothing to
+# read: the verdict existed, in the gate's own ledger, and was never handed over.
+# Measured 2026-08-13 — six consecutive rounds blocked on a missing receipt while
+# that ledger said `tests: pass — pytest-Suite grün`.
+OUT=$(bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bt" --tests "pass: pytest-Suite grün")
+ok "$([ -f "$OUT/TESTS.md" ] && echo yes || echo no)" "yes" "P-T1 the test verdict travels along"
+ok "$(grep -c 'pytest-Suite grün' "$OUT/TESTS.md")" "1" "P-T2 …with the detail, not just the word"
+ok "$(grep -c 'TESTS:' "$OUT/REVIEW_PROMPT.md")" "1" "P-T3 the prompt tells the reviewer to read it"
+# it must not become a licence: a missing TEST stays a finding, only the missing RUN goes
+ok "$(grep -c 'zwei verschiedene Dinge' "$OUT/REVIEW_PROMPT.md")" "1" "P-T4 missing test ≠ missing run"
+# no verdict handed over → no file and no paragraph, rather than a blank claim
+OUT=$(bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bt2")
+ok "$([ -f "$OUT/TESTS.md" ] && echo yes || echo no)" "no" "P-T5 no verdict → nothing claimed"
+ok "$(grep -c 'TESTS:' "$OUT/REVIEW_PROMPT.md")" "0" "P-T6 …and the prompt stays silent about it"
+# a flag without a value is a caller mistake, not a silent empty bundle
+bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bt3" --tests >/dev/null 2>&1
+ok "$?" "64" "P-T7 --tests without a value is refused, not swallowed"
+
 # --- the RULES travel with every bundle ------------------------------------
 # Prose conventions drifted: after the hook move, CONVENTIONS.md still claimed the
 # hooks lived in another repo. Rules as DATA cannot drift that way — every rule

@@ -1391,7 +1391,7 @@ fi
 # and WHICH item burst it). Swallowing it left the author guessing whether the limit
 # was 130k or 426k — so guessing whether splitting the commit could possibly help.
 PDERR=$(mktemp -t veto-packerr 2>/dev/null) || PDERR=""
-if ! BUNDLE=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} $PLAN_FLAG $DOCS_FLAG 2>"${PDERR:-/dev/null}"); then
+if ! BUNDLE=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --tests "$TST: $TDET" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} $PLAN_FLAG $DOCS_FLAG 2>"${PDERR:-/dev/null}"); then
   CAPDET=""
   [ -n "$PDERR" ] && CAPDET=$(grep -E '^(DIFF BUNDLE CAP EXCEEDED|TOP:)' "$PDERR" 2>/dev/null | head -4)
   # only the item that REALLY dominates earns the "one file" wording — two files at 49 %
@@ -1483,7 +1483,7 @@ BLOCKING=$(printf '%s' "$VERDICT" | jq '.blocking | length' 2>/dev/null || echo 
 REQ=$(printf '%s' "$VERDICT" | jq -r '.context_requests[]?.file' 2>/dev/null)
 if [ "${BLOCKING:-0}" -eq 0 ] && [ -n "$REQ" ]; then
   mark codex
-  if BUNDLE2=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --add-files "$REQ" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} $PLAN_FLAG $DOCS_FLAG 2>/dev/null); then
+  if BUNDLE2=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --tests "$TST: $TDET" --add-files "$REQ" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} $PLAN_FLAG $DOCS_FLAG 2>/dev/null); then
     DELIV=$(jq -r '.delivered | join(", ")' "$BUNDLE2/ADDED.json" 2>/dev/null)
     REFUS=$(jq -r '.refused' "$BUNDLE2/ADDED.json" 2>/dev/null)
     [ "$REFUS" = null ] && REFUS=""

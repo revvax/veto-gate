@@ -12,6 +12,7 @@ if ! . "$(dirname "$0")/generated-files.sh" 2>/dev/null || [ -z "${VETO_GENERATE
 fi
 
 DIFF=""; REPO=""; OUT=""; CAP=120000; PLAN=0; ADDF=""; DOCS="on"; PRIOR=""; INTENT=""; RULESF=""
+TESTSV=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --diff) DIFF="$2"; shift 2;;
@@ -24,6 +25,7 @@ while [ $# -gt 0 ]; do
     --prior) PRIOR="$2"; shift 2;;
     --intent) INTENT="$2"; shift 2;;
     --rules) RULESF="$2"; shift 2;;
+    --tests) [ $# -ge 2 ] || { echo "--tests ohne Wert" >&2; exit 64; }; TESTSV="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 64;;
   esac
 done
@@ -324,6 +326,16 @@ if [ -n "$INTENT" ] && [ -f "$INTENT" ] && [ -s "$INTENT" ]; then
   fi
 fi
 
+# What this gate already DID with the test suite, before the reviewer was asked. Without it
+# the reviewer is asked whether a green run is documented and the bundle can never carry one:
+# measured 2026-08-13, six consecutive rounds blocked on exactly that while the gate's own
+# ledger said `tests: pass — pytest-Suite grün`. It is one short line, so it is not charged
+# against the cap — a budget rule must not be the reason a verdict goes unexplained.
+TSTB=0
+if [ -n "$TESTSV" ]; then
+  printf '%s\n' "$TESTSV" > "$OUT/TESTS.md" 2>/dev/null && TSTB=1
+fi
+
 # The RULES travel with every bundle. They are data, not prose: each rule names the
 # stage that establishes it, and rules-check.sh refuses a rule pointing at a stage
 # that does not exist. So what the reviewer reads here cannot describe a system that
@@ -448,6 +460,13 @@ PROMPT
 else
   cat >> "$OUT/REVIEW_PROMPT.md" <<'PROMPT'
 HINWEIS: Diesem Bündel liegt kein Auftrag bei (kein Ziel / Weg / erwartetes Ergebnis). Prüfung auf Abdriften und Weglassen ist deshalb nicht möglich — sag das nicht als Fund, aber leite auch kein Ziel aus dem Diff ab.
+PROMPT
+fi
+
+if [ "$TSTB" = 1 ]; then
+  cat >> "$OUT/REVIEW_PROMPT.md" <<'PROMPT'
+TESTS: `TESTS.md` sagt, was dieser Prüfstand mit der Testsuite gemacht hat, BEVOR du gefragt wurdest. `pass` heißt: die Suite lief soeben und war grün. `fail` kann dich nie erreichen — ein roter Lauf blockt den Commit vorher. `skipped` oder `unavailable` heißt: sie lief NICHT, und der Grund steht dabei. Nimm das als gegeben und verlange keinen Lauf-Beleg, den ein Diff-Bündel nicht tragen kann.
+Das entlastet dich NICHT bei der Testabdeckung: Ändert der Diff Verhalten, ohne dass ein Test dafür mitkommt, ist das weiterhin ein Fund. Ein fehlender TEST und ein fehlender LAUF sind zwei verschiedene Dinge.
 PROMPT
 fi
 
