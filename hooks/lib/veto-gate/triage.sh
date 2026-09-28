@@ -113,5 +113,52 @@ else
   EFFORT="$CEIL"; REASON="$CHANGED Code-Zeilen — Config-Wert gilt"
 fi
 
+# ROLE — what KIND of code this is, a second fact next to the effort. `werkzeug` means
+# tool and proof code: test testbau-repoes, proof scripts, their protocol folders. There only
+# the hard kinds of finding block (security, data loss, a check that passes wrongly);
+# see converge.sh. Measured 2026-09-28: a TCP proxy for an e2e proof took 3 rounds, a
+# proof script 2, and one measuring script 5 — each round found another edge in code
+# no customer ever runs.
+#
+# Werkzeug needs ALL of: facts readable, no sensitive path, at least one non-doc file,
+# and every non-doc file under a tool path. Doc files (.md/.txt/.log) are neutral, so a
+# proof script and its write-up stay one commit. Paths are PREFIXES from the repo root,
+# literal, never patterns. Repo config EXTENDS the list (`tool_paths`) and never
+# replaces it; a malformed list makes the role normal — the strict direction.
+DEFAULT_TOOLS='e2e/testbau-repo/
+e2e/protokolle/
+scripts/
+tools/'
+ROLE=normal; ROLE_REASON="Produkt-Code"
+TOOLS_OK=1
+printf '%s' "$CFG_TXT" | jq -e 'if has("tool_paths")
+  then (.tool_paths | type=="array" and all(.[]; type=="string" and length>0)) else true end' \
+  >/dev/null 2>&1 || TOOLS_OK=0
+if [ "$KNOWN" = 1 ] && [ "$SENSITIVE" = false ] && [ "$TOOLS_OK" = 1 ]; then
+  TOOLS=$(printf '%s\n%s' "$DEFAULT_TOOLS" \
+    "$(printf '%s' "$CFG_TXT" | jq -r '(.tool_paths // [])[]' 2>/dev/null)" | grep -v '^$')
+  CODEF=0; OUTSIDE=""
+  while IFS= read -r nf; do
+    [ -z "$nf" ] && continue
+    case "$nf" in *.md|*.txt|*.log) continue;; esac
+    CODEF=$((CODEF + 1)); UNDER=0
+    while IFS= read -r tp; do
+      # a directory boundary, never a bare string prefix: `scripts` must not
+      # claim `scripts-secret.ts` (same lesson as the gate's under_apaths)
+      tp=${tp%/}; [ -z "$tp" ] && continue
+      case "$nf" in "$tp"/*) UNDER=1; break;; esac
+    done <<<"$TOOLS"
+    [ "$UNDER" = 1 ] || { OUTSIDE="$nf"; break; }
+  done <<<"$NAMES_TXT"
+  if [ "$CODEF" -gt 0 ] && [ -z "$OUTSIDE" ]; then
+    ROLE=werkzeug; ROLE_REASON="alle $CODEF Code-Dateien unter Werkzeug-Pfaden"
+  elif [ -n "$OUTSIDE" ]; then
+    ROLE_REASON="$OUTSIDE liegt nicht unter einem Werkzeug-Pfad"
+  fi
+elif [ "$TOOLS_OK" = 0 ]; then
+  ROLE_REASON="tool_paths unbrauchbar — Produkt-Regeln gelten"
+fi
+
 jq -cn --arg e "$EFFORT" --arg p "$PROFILE" --argjson s "$SENSITIVE" --arg r "$REASON" \
-  '{effort:$e,profile:$p,sensitive:$s,reason:$r}'
+  --arg role "$ROLE" --arg rr "$ROLE_REASON" \
+  '{effort:$e,profile:$p,sensitive:$s,reason:$r,role:$role,role_reason:$rr}'

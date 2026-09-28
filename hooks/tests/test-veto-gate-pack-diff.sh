@@ -335,11 +335,17 @@ PR=$(mktemp)
 printf '{"runde":2,"vorrunden":[{"round":1,"result":"codex-block","changed":10,"findings":[{"id":"B1","claim":"alt","fix":"f","quote":"q"}]}]}' > "$PR"
 OUT=$(bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bp" --prior "$PR")
 ok "$([ -f "$OUT/PRIOR_FINDINGS.json" ] && echo yes)" "yes" "P-M1 prior findings in the bundle"
-ok "$(grep -c 'RESTLICHEN Punkte' "$OUT/REVIEW_PROMPT.md")" "1" "P-M2 convergence question in the prompt"
+ok "$(grep -c 'Ab jetzt blockt nur noch' "$OUT/REVIEW_PROMPT.md")" "1" "P-M2 convergence rule in the prompt"
+ok "$(grep -c 'VOLLE RUNDE' "$OUT/REVIEW_PROMPT.md")" "0" "P-M2b …and no full-round line in a later round"
 # P-M3: without --prior neither file nor paragraph appears (round 1 stays cold)
 OUT=$(bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bp0")
 ok "$([ -f "$OUT/PRIOR_FINDINGS.json" ] || echo no)" "no" "P-M3 no prior → no memory file"
-ok "$(grep -c 'RESTLICHEN Punkte' "$OUT/REVIEW_PROMPT.md")" "0" "P-M3b no prior → no paragraph"
+ok "$(grep -c 'Ab jetzt blockt nur noch' "$OUT/REVIEW_PROMPT.md")" "0" "P-M3b no prior → no paragraph"
+ok "$(grep -c 'VOLLE RUNDE' "$OUT/REVIEW_PROMPT.md")" "1" "P-M3c round 1 is told to report everything now"
+ok "$(grep -c '"art":""' "$OUT/REVIEW_PROMPT.md")" "1" "P-M3d schema carries the kind of a finding"
+ok "$(grep -c 'WERKZEUG:' "$OUT/REVIEW_PROMPT.md")" "0" "P-M3e no role paragraph for product code"
+OUT=$(bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bpw" --role werkzeug)
+ok "$(grep -c 'WERKZEUG:' "$OUT/REVIEW_PROMPT.md")" "1" "P-M3f role werkzeug is told to the reviewer"
 # P-M4: unreadable prior → ignored, never a crash, no half-truth in the prompt
 printf 'kein json' > "$PR"
 OUT=$(bash "$P" --diff "$TMP/d.patch" --repo "$R" --out "$TMP/bp1" --prior "$PR")

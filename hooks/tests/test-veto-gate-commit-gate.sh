@@ -12,6 +12,7 @@ export VETO_GATE_TIMEOUT=5                 # mocks are instant; keep watcher sho
 # dead port fails open instantly; the B2 section overrides this per test
 export VETO_GATE_HERMES_BIN="/nonexistent/hermes"   # hermetic: never a real paid call
 export VETO_GATE_KREISEL_STOP=0   # this suite is a fixture farm, not one correction sequence
+export VETO_GATE_KONVERGENZ=off   # …and not one either for the round rule (converge.sh)
 TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$VETO_GATE_LOG_DIR"' EXIT
 PASS=0; FAIL=0
 ok(){ if [ "$1" = "$2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $3 (got '$1' want '$2')"; fi; }

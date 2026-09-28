@@ -25,6 +25,8 @@ ok "$(printf '%s' "$R" | jq -r '.prior[0].findings[0].id')" "B1" "T2b finding st
 ok "$(printf '%s' "$R" | jq -r '.prior[0].changed')" "10" "T2c size stored"
 SEQ=$(printf '%s' "$R" | jq -r .seq)
 ok "$([ -f "$KD/$SEQ.diff" ] && echo yes)" "yes" "T2d exact previous diff stored"
+ok "$(printf '%s' "$R" | jq -r .prev_diff)" "$KD/$SEQ.diff" "T2e state names where the previous diff lies"
+ok "$(bash "$S" state --repo r --branch b --base other | jq -r .prev_diff)" "" "T2f no owned round → no previous diff"
 
 # T3: a different BASE is a different sequence — independent changes must never read
 # as one correction loop (spec: the id exists exactly for this)

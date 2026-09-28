@@ -482,6 +482,10 @@ size_numbers_sound(){
   # the lockfile share only ever SUBTRACTS, so an unusable value falls strict: 0
   case "${LOCKL:-}" in ''|*[!0-9]*) LOCKL=0;; esac
   [ "$LOCKL" -gt "$CHANGED" ] && LOCKL="$CHANGED"
+  # the whitespace share only ever subtracts too; the two shares never overlap
+  # (diff-size.sh leaves lockfile lines out of it), so together they stay <= CHANGED
+  case "${WSL:-}" in ''|*[!0-9]*) WSL=0;; esac
+  [ "$WSL" -gt $(( CHANGED - LOCKL )) ] && WSL=$(( CHANGED - LOCKL ))
   return 0; }
 
 if [ "$ADD_CHAIN" = 1 ] || [ "$COMMIT_ALL" = 1 ]; then
@@ -618,10 +622,12 @@ EOF_UP
     # the lockfile share of the SAME diff — measuring it on a different one would let a
     # narrow count be reduced by a wide file list and hand-wave real code past the gate
     LOCKL=$(bash "$LIB/diff-size.sh" --diff "$SDIFF" --lockfile-lines)
+    WSL=$(bash "$LIB/diff-size.sh" --diff "$SDIFF" --ws-lines)
     rm -f "$SDIFF"
   else
     CHANGED=$(bash "$LIB/diff-size.sh" --diff "$DIFF")
     LOCKL=$(bash "$LIB/diff-size.sh" --diff "$DIFF" --lockfile-lines)
+    WSL=$(bash "$LIB/diff-size.sh" --diff "$DIFF" --ws-lines)
   fi
   # BEFORE the untracked loop below adds to either number — arithmetic on an empty
   # CHANGED would quietly turn it into "just the new files" and hide the failure
@@ -654,6 +660,22 @@ EOF_UP
       # never `+`, so the size gate and grounding (which skip these) are unaffected.
       # awk NR, not `grep -c ''`: on an EMPTY file grep prints 0 AND exits 1, so `|| echo 0`
       # appended a SECOND 0 and broke the hunk header (codex). awk prints exactly one count.
+      # A BINARY file (a screenshot in a proof folder) has no lines. Read as text it
+      # counted 4488 "code lines" for a handful of PNGs (measured 2026-09-28)
+      # and shipped bytes to the reviewer. git decides what is binary: --numstat prints
+      # '-' for it. The file stays in NAMES, so every name-based stage still sees it.
+      # Captured, never piped: --no-index exits 1 whenever the files differ, which is
+      # always here, and pipefail would read that as "not binary".
+      UNS=$(git -C "$CWD" diff --no-index --numstat -- /dev/null "$uf" 2>/dev/null)
+      if [ "${UNS%%	*}" = "-" ]; then
+        {
+          printf 'diff --git a/%s b/%s\n' "$uf" "$uf"
+          printf 'new file mode 100644\n'
+          printf 'Binary files /dev/null and b/%s differ\n' "$uf"
+        } >> "$DIFF"
+        printf '%s\n' "$uf" >> "$NAMES"
+        continue
+      fi
       UNL=$(awk 'END{print NR+0}' "$CWD/$uf" 2>/dev/null); [ -n "$UNL" ] || UNL=0
       {
         printf 'diff --git a/%s b/%s\n' "$uf" "$uf"
@@ -682,6 +704,7 @@ else
     | awk -F'\t' '$1 ~ /^[DR]/ { print $2 }' > "$DELNAMES" || true
   CHANGED=$(bash "$LIB/diff-size.sh" --diff "$DIFF")
   LOCKL=$(bash "$LIB/diff-size.sh" --diff "$DIFF" --lockfile-lines)
+  WSL=$(bash "$LIB/diff-size.sh" --diff "$DIFF" --ws-lines)
   size_numbers_sound
 fi
 [ -s "$DIFF" ] || exit 0     # nothing to review
@@ -847,20 +870,34 @@ proof_init     # from here on every stage leaves a note — a check that vanishe
 # this, every dependency commit blocked — and "split it up" cannot be followed when
 # manifest and lockfile are one statement, so it sent the author to the override and
 # the security upgrade got NO review at all. The bundle cap still bounds the real work.
-CODEL=$(( ${CHANGED:-0} - LOCKL ))
+CODEL=$(( ${CHANGED:-0} - LOCKL - ${WSL:-0} ))
 [ "$CODEL" -lt 0 ] && CODEL=0
 SIZENOTE="${CODEL} Code-Zeilen"
 [ "$LOCKL" -gt 0 ] && SIZENOTE="$SIZENOTE (+$LOCKL Lockfile-Zeilen, nicht gezählt)"
-if [ "$CODEL" -gt "$CFG_MAXLINES" ]; then
+[ "${WSL:-0}" -gt 0 ] && SIZENOTE="$SIZENOTE (+$WSL nur Leerraum, nicht gezählt)"
+# Third switch, for the SIZE alone. The old override skipped size AND every reviewer
+# at once, so a commit that was merely too big to split left without any review.
+# This one lifts only the line limit; the bundle cap and all reviewers stay. Single
+# use, consumed here whether or not the limit was hit — like the kreisel switch.
+SOVERRIDE="$CWD/.claude/session-flags/${SID}-veto-size-override"
+SIZE_LIFTED=0
+[ -f "$SOVERRIDE" ] && { rm -f "$SOVERRIDE"; SIZE_LIFTED=1; }
+if [ "$CODEL" -gt "$CFG_MAXLINES" ] && [ "$SIZE_LIFTED" = 1 ]; then
+  proof_add size pass "$SIZENOTE > $CFG_MAXLINES — Grenze bewusst gelöst, Prüfung läuft"
+  echo "ⓘ VETO-GATE: Größen-Grenze bewusst gelöst ($SIZENOTE > $CFG_MAXLINES) — es wird normal geprüft." >&2
+elif [ "$CODEL" -gt "$CFG_MAXLINES" ]; then
   proof_add size fail "$SIZENOTE > $CFG_MAXLINES"
   {
     echo "⛔ VETO-GATE: Diff zu groß ($SIZENOTE > $CFG_MAXLINES) — bitte aufteilen: ein Thema = ein Commit."
+    echo "Nicht teilbar? Nur die Größe lösen, die Prüfer laufen weiter (SEPARATER Befehl VOR dem Commit):"
+    echo "  touch \"$SOVERRIDE\""
     echo "$OV_HINT"
   } >&2
   log_run --result size-block --blocking 1 --proofs "$(proof_json)"
   exit 2
+else
+  proof_add size pass "$SIZENOTE"
 fi
-proof_add size pass "$SIZENOTE"
 
 # Stage 1.6 — effort triage: the depth of the review follows the FACTS of the diff
 # (which paths it touches, how many code lines), computed deterministically and for
@@ -875,8 +912,12 @@ TRIAGE_REASON=$(printf '%s' "$TRIAGE" | jq -r '.reason // empty' 2>/dev/null)
 case "$TRIAGE_EFFORT" in low|medium|high) ;; *) TRIAGE_EFFORT="$EFFORT"; TRIAGE_PROFILE=normal
   TRIAGE_REASON="Triage ohne Antwort — Config-Wert gilt";; esac
 case "$TRIAGE_PROFILE" in light|normal) ;; *) TRIAGE_PROFILE=normal;; esac
+# the ROLE (product vs. tool code) decides which findings may block — see converge.sh.
+# Anything unreadable is product code: the strict side.
+TRIAGE_ROLE=$(printf '%s' "$TRIAGE" | jq -r '.role // empty' 2>/dev/null)
+case "$TRIAGE_ROLE" in werkzeug) ;; *) TRIAGE_ROLE=normal;; esac
 EFFORT="$TRIAGE_EFFORT"
-proof_add triage pass "$EFFORT ($TRIAGE_PROFILE) — $TRIAGE_REASON"
+proof_add triage pass "$EFFORT ($TRIAGE_PROFILE, Rolle $TRIAGE_ROLE) — $TRIAGE_REASON"
 
 mark grounding
 
@@ -1077,6 +1118,38 @@ if [ -n "$KROUND" ] && [ "$KSTOP" -gt 0 ] && [ "$KROUND" -ge "$KSTOP" ] && [ -n 
   echo "ⓘ VETO-GATE: Runde $KROUND, Bremse greift nicht — $KWHY. Es wird normal geprüft." >&2
 fi
 
+# Stufe 2: from round 2 of a correction sequence, hand the reviewers the previous rounds'
+# findings — their memory, and converge.sh's list of prior ids. KSTATE was read BEFORE this run, so it holds exactly the
+# prior rounds; pack-diff decides whether it fits (best-effort, like the docs).
+if [ -n "${KROUND:-}" ] && [ "${KROUND:-1}" -ge 2 ]; then
+  PRIORF=$(mktemp -t veto-gate-prior)
+  printf '%s' "$KSTATE" | jq -c '{runde:.round, vorrunden:.prior}' > "$PRIORF" 2>/dev/null || : > "$PRIORF"
+fi
+
+# Konvergenz: which findings may still block in THIS round (converge.sh). Applied to
+# every reviewer's answer before it is counted, so the pre-reviewer and codex follow
+# one rule. The previous round's diff comes from the sequence store; without it the
+# round-2 check cannot tell fix lines apart and stays strict.
+KPREVDIFF=$(printf '%s' "$KSTATE" | jq -r '.prev_diff // ""' 2>/dev/null)
+[ -n "$KPREVDIFF" ] && [ -f "$KPREVDIFF" ] || KPREVDIFF=""
+DEMOTED_ALL='[]'
+converge_verdict(){ # $1 = verdict JSON → stdout: the same verdict, demoted findings moved
+  local vf out; vf=$(mktemp -t veto-gate-conv 2>/dev/null) || { printf '%s' "$1"; return 0; }
+  printf '%s' "$1" > "$vf"
+  # test seam, same shape as VETO_GATE_KREISEL_STOP=0: a suite that is a fixture farm
+  # (many unrelated attempts on one HEAD) is not one correction sequence — `off` judges
+  # every attempt as round 1. Role and false red still apply.
+  local rnd="${KROUND:-1}"; [ "${VETO_GATE_KONVERGENZ:-on}" = off ] && rnd=1
+  out=$(bash "$LIB/converge.sh" --verdict "$vf" --round "$rnd" --role "$TRIAGE_ROLE" \
+        ${PRIORF:+--prior "$PRIORF"} --diff "$DIFF" ${KPREVDIFF:+--prev-diff "$KPREVDIFF"} 2>/dev/null)
+  rm -f "$vf"
+  if [ -n "$out" ]; then printf '%s' "$out"; else printf '%s' "$1"; fi; }
+demoted_add(){ # $1 = converged verdict → collects its demoted list for the pass message
+  local d; d=$(printf '%s' "$1" | jq -c '.demoted // []' 2>/dev/null) || d='[]'
+  DEMOTED_ALL=$(jq -cn --argjson a "$DEMOTED_ALL" --argjson b "${d:-[]}" '$a + $b' 2>/dev/null) || true; }
+demoted_line(){ local n; n=$(printf '%s' "$1" | jq '.demoted // [] | length' 2>/dev/null)
+  [ "${n:-0}" -gt 0 ] && echo "ⓘ Außerdem $n Punkt(e) NICHT blockierend (Runde ${KROUND:-1}, Rolle $TRIAGE_ROLE) — in die Liste eintragen."; return 0; }
+
 # Stage 2.5 — B2: local pre-reviewer (MiniMax-M3 via hermes). Free filter BEFORE
 # codex: findings block immediately (no codex quota burned); any infra
 # problem (down, timeout, oversized, bad JSON) falls open to codex — the
@@ -1092,6 +1165,7 @@ if [ "$CFG_PRE" != "none" ] && [ -z "$PLAN_FLAG" ]; then
     *)    QV=$(bash "$LIB/remote-diff-review.sh" --provider "$CFG_PRE" --diff "$DIFF" 2>/dev/null) || QRC=$?;;
   esac
   if [ "$QRC" = 0 ]; then
+    QV=$(converge_verdict "$QV"); demoted_add "$QV"
     QBLK=$(printf '%s' "$QV" | jq '.blocking | length' 2>/dev/null || echo 0)
     if [ "${QBLK:-0}" -gt 0 ]; then
       proof_add prechecker fail "$QBLK Fund(e) ($CFG_PRE)"
@@ -1100,6 +1174,7 @@ if [ "$CFG_PRE" != "none" ] && [ -z "$PLAN_FLAG" ]; then
       {
         echo "⛔ VETO-GATE: Vorprüfer ($CFG_PRE) fand $QBLK blockierende(s) Problem(e) — Commit geblockt (Codex-Kontingent gespart)."
         printf '%s' "$QV" | jq -r '.blocking[] | "  [\(.id)] \(.claim)\n     warum: \(.why)\n     fix: \(.fix)"' 2>/dev/null
+        demoted_line "$QV"
         kreisel_warn
         echo "Fix, dann erneut. $OV_HINT"
       } >&2
@@ -1126,14 +1201,6 @@ fi
 # Dashboard docs toggle: config .docs (default true). Off → skip the docs stage.
 DOCS_FLAG=""
 [ "$(jq -r 'if has("docs") then .docs else true end' "$CFG" 2>/dev/null)" = false ] && DOCS_FLAG="--docs off"
-
-# Stufe 2: from round 2 of a correction sequence, hand codex the previous rounds'
-# findings — his memory. KSTATE was read BEFORE this run, so it holds exactly the
-# prior rounds; pack-diff decides whether it fits (best-effort, like the docs).
-if [ -n "${KROUND:-}" ] && [ "${KROUND:-1}" -ge 2 ]; then
-  PRIORF=$(mktemp -t veto-gate-prior)
-  printf '%s' "$KSTATE" | jq -c '{runde:.round, vorrunden:.prior}' > "$PRIORF" 2>/dev/null || : > "$PRIORF"
-fi
 
 # The ORDER this change was built for, so codex can judge the diff against it instead
 # of guessing the goal backwards. It comes from the SAME parser the claim stage uses —
@@ -1391,7 +1458,7 @@ fi
 # and WHICH item burst it). Swallowing it left the author guessing whether the limit
 # was 130k or 426k — so guessing whether splitting the commit could possibly help.
 PDERR=$(mktemp -t veto-packerr 2>/dev/null) || PDERR=""
-if ! BUNDLE=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --tests "$TST: $TDET" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} $PLAN_FLAG $DOCS_FLAG 2>"${PDERR:-/dev/null}"); then
+if ! BUNDLE=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --tests "$TST: $TDET" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} --role "$TRIAGE_ROLE" $PLAN_FLAG $DOCS_FLAG 2>"${PDERR:-/dev/null}"); then
   CAPDET=""
   [ -n "$PDERR" ] && CAPDET=$(grep -E '^(DIFF BUNDLE CAP EXCEEDED|TOP:)' "$PDERR" 2>/dev/null | head -4)
   # only the item that REALLY dominates earns the "one file" wording — two files at 49 %
@@ -1483,7 +1550,7 @@ BLOCKING=$(printf '%s' "$VERDICT" | jq '.blocking | length' 2>/dev/null || echo 
 REQ=$(printf '%s' "$VERDICT" | jq -r '.context_requests[]?.file' 2>/dev/null)
 if [ "${BLOCKING:-0}" -eq 0 ] && [ -n "$REQ" ]; then
   mark codex
-  if BUNDLE2=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --tests "$TST: $TDET" --add-files "$REQ" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} $PLAN_FLAG $DOCS_FLAG 2>/dev/null); then
+  if BUNDLE2=$(bash "$LIB/pack-diff.sh" --diff "$DIFF" --repo "$CWD" --cap "${VETO_GATE_CAP:-120000}" --tests "$TST: $TDET" --add-files "$REQ" ${PRIORF:+--prior "$PRIORF"} ${INTENTF:+--intent "$INTENTF"} ${RULESF:+--rules "$RULESF"} --role "$TRIAGE_ROLE" $PLAN_FLAG $DOCS_FLAG 2>/dev/null); then
     DELIV=$(jq -r '.delivered | join(", ")' "$BUNDLE2/ADDED.json" 2>/dev/null)
     REFUS=$(jq -r '.refused' "$BUNDLE2/ADDED.json" 2>/dev/null)
     [ "$REFUS" = null ] && REFUS=""
@@ -1517,6 +1584,10 @@ if [ "${BLOCKING:-0}" -eq 0 ] && [ -n "$REQ" ]; then
   fi
 fi
 
+VERDICT=$(converge_verdict "$VERDICT"); demoted_add "$VERDICT"
+BLOCKING=$(printf '%s' "$VERDICT" | jq '.blocking | length' 2>/dev/null || echo 0)
+NDEM=$(printf '%s' "$DEMOTED_ALL" | jq 'length' 2>/dev/null); case "$NDEM" in ''|*[!0-9]*) NDEM=0;; esac
+proof_add konvergenz pass "Runde ${KROUND:-1}, Rolle $TRIAGE_ROLE — $NDEM Fund(e) nicht blockierend"
 if [ "${BLOCKING:-0}" -gt 0 ]; then
   proof_add codex fail "$BLOCKING Fund(e) (effort=$EFFORT)"
   KJ=$(kreisel_record codex-block "$VERDICT")
@@ -1524,6 +1595,7 @@ if [ "${BLOCKING:-0}" -gt 0 ]; then
   {
     echo "⛔ VETO-GATE: codex fand $BLOCKING blockierende(s) Problem(e) im Diff — Commit geblockt."
     printf '%s' "$VERDICT" | jq -r '.blocking[] | "  [\(.id)] \(.claim)\n     warum: \(.why)\n     fix: \(.fix)"' 2>/dev/null
+    demoted_line "$VERDICT"
     kreisel_warn
     echo "Fix, dann erneut. $OV_HINT"
   } >&2
@@ -1620,5 +1692,14 @@ if [ "$PV" = 2 ]; then
   MISS=$(proof_missing)
   echo "⚠️ VETO-GATE: Commit durch, aber NICHT geprüft: $MISS" >&2
   notify_discord gap codex "" "$MISS"
+fi
+# The rest list reaches CLAUDE only this way: a PreToolUse hook that exits 0 is heard
+# through stdout JSON, never through stderr (code.claude.com/docs/en/hooks: "Text from
+# `additionalContext` is kept from every hook and passed to Claude together"). No
+# permissionDecision is set, so the normal permission flow is untouched.
+if [ "$NDEM" -gt 0 ]; then
+  REST=$(printf '%s' "$DEMOTED_ALL" | jq -r '.[] | "- [\(.id)] (\(.art)) \(.claim // "") — Fix: \(.fix // "") [\(.grund)]"' 2>/dev/null)
+  jq -cn --arg t "VETO-GATE: Commit durch. $NDEM Prüfer-Punkt(e) blocken nach der Konvergenz-Regel nicht (Runde ${KROUND:-1}, Rolle $TRIAGE_ROLE) — trag sie in die Liste der offenen Punkte ein:
+$REST" '{hookSpecificOutput:{hookEventName:"PreToolUse",additionalContext:$t}}' 2>/dev/null || true
 fi
 exit 0

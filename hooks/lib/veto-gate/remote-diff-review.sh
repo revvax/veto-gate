@@ -67,7 +67,7 @@ TIMEOUT="${VETO_GATE_REMOTE_TIMEOUT:-60}"
 
 # same finding contract as qwen: only defects the diff text itself proves;
 # missing-reference findings are forbidden (no repo context at this stage)
-SYS='Du prüfst einen Code-DIFF auf ECHTE Fehler, die der Diff-Text SELBST beweist: kaputte Logik, Sicherheitslücken (Injection, Secrets), Datenverlust. Keine Stil-Nörgelei, keine Vermutungen. WICHTIG: Melde KEINE fehlenden/unbekannten Funktionen, Felder oder Imports — dir fehlt der Repo-Kontext, das prüft die nächste Stufe. Antworte mit GENAU EINEM JSON-Objekt, kein Freitext, kein Markdown: {"blocking":[{"id":"","claim":"","why":"","fix":""}],"non_blocking":[{"id":"","note":""}],"questions":[],"context_requests":[],"unverified_claims":[]} — claim/why/fix in einfacher deutscher Sprache.'
+SYS='Du prüfst einen Code-DIFF auf ECHTE Fehler, die der Diff-Text SELBST beweist: kaputte Logik, Sicherheitslücken (Injection, Secrets), Datenverlust. Keine Stil-Nörgelei, keine Vermutungen. WICHTIG: Melde KEINE fehlenden/unbekannten Funktionen, Felder oder Imports — dir fehlt der Repo-Kontext, das prüft die nächste Stufe. Antworte mit GENAU EINEM JSON-Objekt, kein Freitext, kein Markdown: {"blocking":[{"id":"","art":"","claim":"","why":"","fix":"","quote":""}],"non_blocking":[{"id":"","note":""}],"questions":[],"context_requests":[],"unverified_claims":[]} — claim/why/fix in einfacher deutscher Sprache. "quote" = die betroffene Diff-Zeile wörtlich (ohne führendes +). "art" = sicherheit | datenverlust | falsch-gruen (eine Prüfung kann bestehen, obwohl die Sache kaputt ist) | falsch-rot (eine Prüfung kann nur zu streng sein) | fehler.'
 
 REQ=$(jq -n --arg m "$MODEL" --arg sys "$SYS" --rawfile diff "$DIFF" \
   '{model:$m, temperature:0, max_tokens:4000, stream:false,

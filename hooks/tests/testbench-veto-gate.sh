@@ -13,6 +13,7 @@ HOOK="$(cd "$(dirname "$0")/.." && pwd)/veto-gate.sh"
 export VETO_GATE_TIMEOUT=5
 # hermetic: qwen stage fails open instantly (dead port), never a real LM Studio
 export VETO_GATE_HERMES_BIN="/nonexistent/hermes"   # hermetic: never a real paid call
+export VETO_GATE_KONVERGENZ=off   # scenarios are judged per attempt; the round rule has its own suite
 export VETO_GATE_QWEN_TIMEOUT=2
 PASS=0; FAIL=0
 ok(){ if [ "$1" = "$2" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  FAIL: $3 (exit $1, want $2)"; fi; }

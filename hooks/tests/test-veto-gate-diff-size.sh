@@ -129,4 +129,82 @@ EOF
 ok "$(bash "$S" --diff "$D" --lockfile-lines)" "0" "T12 lookalike names are not lockfiles"
 ok "$(bash "$S" --diff "$D")" "2" "T12b …and still count as code"
 
+# ── whitespace-only share: a re-indent is not a big change to judge ────────
+# Measured on a real product commit that wrapped a component in one more element —
+# 1081 changed lines, 15 with `git diff -w`. The size gate blocked it, and
+# "split it up" cannot be followed for an indent.
+cat > "$D" <<'EOF'
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,4 +1,5 @@
+-const a = 1;
+-  if (x) { y(); }
++    const a = 1;
++	if (x) {   y(); }
++const b = 2;
+EOF
+ok "$(bash "$S" --diff "$D")" "5" "T13 re-indent stays in the honest total"
+ok "$(bash "$S" --diff "$D" --ws-lines)" "4" "T14 …two re-indented pairs are countable on their own"
+
+# pairing is per HUNK: the same text removed in one hunk and added in another
+# is a move, not an indent, and keeps counting (same as git -w)
+cat > "$D" <<'EOF'
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,0 @@
+-const moved = 1;
+@@ -9,0 +9,1 @@
++  const moved = 1;
+EOF
+ok "$(bash "$S" --diff "$D" --ws-lines)" "0" "T15 a move across hunks is not whitespace"
+
+# a changed WORD is never whitespace, however the spacing looks
+cat > "$D" <<'EOF'
++++ b/src/a.ts
+@@ -1 +1 @@
+-const a = 1;
++const a = 2;
+EOF
+ok "$(bash "$S" --diff "$D" --ws-lines)" "0" "T16 a real edit is not whitespace"
+
+# doc and lockfile lines never enter the share: they are not counted as code
+# in the first place, and a lockfile line must not be subtracted twice
+cat > "$D" <<'EOF'
++++ b/docs/a.md
+@@ -1 +1 @@
+-x y
++xy
++++ b/package-lock.json
+@@ -1 +1 @@
+-  "a": 1
++"a": 1
+EOF
+ok "$(bash "$S" --diff "$D" --ws-lines)" "0" "T17 doc and lockfile lines are not in the share"
+
+# a hunk-less diff (old fixtures, the gate's own synthetic new-file hunks) is
+# one section per file, and the file boundary still separates pairs
+cat > "$D" <<'EOF'
++++ b/src/a.ts
+-  x = 1
++x = 1
++++ b/src/b.ts
+-  y = 1
++++ b/src/c.ts
++y = 1
+EOF
+ok "$(bash "$S" --diff "$D" --ws-lines)" "2" "T18 without @@ each file is one section, never two"
+cat > "$D" <<'EOF'
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+-  x = 1
+diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
++x = 1
+EOF
+ok "$(bash "$S" --diff "$D" --ws-lines)" "0" "T19 a pair never spans two files"
+
 echo "diff-size: PASS=$P FAIL=$F"; [ "$F" -eq 0 ]

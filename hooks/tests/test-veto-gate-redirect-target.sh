@@ -27,6 +27,7 @@ export VETO_GATE_LOG_DIR="$(mktemp -d)"
 export VETO_GATE_TIMEOUT=5
 export VETO_GATE_HERMES_BIN="/nonexistent/hermes"   # never a real paid call
 export VETO_GATE_KREISEL_STOP=0
+export VETO_GATE_KONVERGENZ=off   # repeated attempts here test the TARGET, not a correction sequence
 TMP=$(mktemp -d); trap 'rm -rf "$TMP" "$VETO_GATE_LOG_DIR"' EXIT
 P=0; F=0
 ok(){ if [ "$1" = "$2" ]; then P=$((P+1)); else F=$((F+1)); echo "  FAIL: $3 (got '$1' want '$2')"; fi; }

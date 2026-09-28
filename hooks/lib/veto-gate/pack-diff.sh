@@ -11,7 +11,7 @@ if ! . "$(dirname "$0")/generated-files.sh" 2>/dev/null || [ -z "${VETO_GENERATE
   exit 70
 fi
 
-DIFF=""; REPO=""; OUT=""; CAP=120000; PLAN=0; ADDF=""; DOCS="on"; PRIOR=""; INTENT=""; RULESF=""
+DIFF=""; REPO=""; OUT=""; CAP=120000; PLAN=0; ADDF=""; DOCS="on"; PRIOR=""; INTENT=""; RULESF=""; ROLE=normal
 TESTSV=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
     --prior) PRIOR="$2"; shift 2;;
     --intent) INTENT="$2"; shift 2;;
     --rules) RULESF="$2"; shift 2;;
+    --role) ROLE="$2"; shift 2;;
     --tests) [ $# -ge 2 ] || { echo "--tests ohne Wert" >&2; exit 64; }; TESTSV="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 64;;
   esac
@@ -426,9 +427,10 @@ Du bist ein adversarialer, read-only Reviewer eines Code-DIFFS. Deine Welt ist A
 Prüfe den DIFF adversarial. Fokus: echte Bugs, Sicherheitslücken (authz/authn/secrets/injection), kaputte/erfundene Referenzen (Imports, Funktionen, Felder, die es nicht gibt), Race-Conditions, Datenverlust, fehlende Fehlerbehandlung. Melde NUR was der Diff wirklich einführt — keine Stil-Nörgelei.
 Grounding: Jede API/Funktion/jedes Feld, das der neue Code benutzt, muss in `context/` oder im Diff selbst belegbar sein. Nicht belegbar → `unverified_claims`.
 Antworte mit GENAU EINEM JSON-Objekt nach diesem Schema (kein Freitext, kein Markdown):
-{"blocking":[{"id":"","claim":"","why":"","fix":"","quote":""}],"non_blocking":[{"id":"","note":""}],"questions":[{"id":"","q":""}],"context_requests":[{"file":"","why":""}],"unverified_claims":[{"claim":"","source_given":"","problem":""}]}
+{"blocking":[{"id":"","art":"","claim":"","why":"","fix":"","quote":"","vorrunde":""}],"non_blocking":[{"id":"","note":""}],"questions":[{"id":"","q":""}],"context_requests":[{"file":"","why":""}],"unverified_claims":[{"claim":"","source_given":"","problem":""}]}
 Schreibe claim/why/fix in einfacher deutscher Sprache: kurze Sätze, kein Fachjargon (Fachwort nur mit Klammer-Erklärung), so dass ein Nicht-Programmierer versteht: WAS ist falsch (claim), WARUM ist es ein Problem (why, 1 Satz), WIE behebt man es (fix, 1 Satz).
 In "quote": zitiere WÖRTLICH die betroffene(n) Zeile(n) aus DIFF.patch (ohne führendes '+'). Leer nur, wenn der Fund keinen konkreten Code-Ort hat. Zeilennummern nützen nichts — sie verschieben sich; das Zitat ist der Anker.
+In "art": genau eines von `sicherheit` (Lücke in Rechten, Geheimnissen, Einschleusung), `datenverlust` (Daten gehen verloren oder werden falsch überschrieben), `falsch-gruen` (eine Prüfung, ein Test oder Beweis kann BESTEHEN, obwohl die Sache kaputt ist), `falsch-rot` (eine Prüfung kann nur zu STRENG sein — sie schlägt fehl, obwohl alles stimmt, und zeigt sich damit beim ersten Lauf selbst), `fehler` (jeder andere echte Fehler). Wähle die ehrliche Art, nicht die dringlichste.
 PROMPT
 
 # What did NOT ship whole. Said out loud, because the prompt above tells the reviewer
@@ -493,12 +495,27 @@ fi
 
 # Stufe 2: the memory paragraph — only when the prior findings really shipped. A
 # dropped memory is SAID (one line), never silently absent (UL-006's spirit).
+#
+# The convergence rule (converge.sh enforces it on the answer; this tells the reviewer,
+# so the one full round is used as one). Measured 2026-09-28: after a first block, 151
+# of 187 sequences ended in an override — each round found something new at lines that
+# already stood in round 1, so no round ever had to be complete.
 if [ "$PRIOR_OK" = 1 ]; then
   cat >> "$OUT/REVIEW_PROMPT.md" <<'PROMPT'
-GEDÄCHTNIS: Dies ist NICHT die erste Runde dieser Korrektur-Folge. `PRIOR_FINDINGS.json` enthält die Funde der Vorrunden; der Diff wurde seither überarbeitet. Urteile über das DELTA mit diesem Kontext statt jede Version kalt: Sind die RESTLICHEN Punkte wirklich blockierend, oder findest du nur noch progressiv kleinere Kanten an illustrativem Inhalt? Die Maßstäbe bleiben unverändert: ein echter Fehler ist blockierend, egal in welcher Runde. Ob ein Vorrunden-Fund behoben ist, entscheidet allein der AKTUELLE Diff — nichts gilt automatisch als erledigt oder als abgelehnt.
+GEDÄCHTNIS: Dies ist NICHT die erste Runde dieser Korrektur-Folge. `PRIOR_FINDINGS.json` enthält die Funde der Vorrunden (`runde` = diese Runde); der Diff wurde seither überarbeitet. Ob ein Vorrunden-Fund behoben ist, entscheidet allein der AKTUELLE Diff.
+Ab jetzt blockt nur noch: (1) ein Vorrunden-Fund, der NICHT behoben ist — dann trage seine Kennung in "vorrunde" ein; (2) ein Fehler in Zeilen, die der Fix NEU geschrieben hat — zitiere sie in "quote"; (3) jede Art `sicherheit`, `datenverlust`, `falsch-gruen`, egal wo. Ab Runde 3 blockt nur noch (3). Alles andere, was du neu an alten Zeilen findest, melde trotzdem — es wird als nicht blockierender Punkt festgehalten.
 PROMPT
 elif [ "$PRIOR_FULL" = 1 ]; then
   echo "HINWEIS: Vorrunden-Kontext vorhanden, aber weggelassen (Bündel-Grenze)." >> "$OUT/REVIEW_PROMPT.md"
+else
+  cat >> "$OUT/REVIEW_PROMPT.md" <<'PROMPT'
+VOLLE RUNDE: Dies ist die erste Runde dieser Korrektur-Folge und deine einzige volle. Melde JETZT alles, was du findest — später zählt nur noch, ob der Fix die Funde behebt und keine neuen Fehler in seine eigenen Zeilen bringt.
+PROMPT
+fi
+if [ "$ROLE" = werkzeug ]; then
+  cat >> "$OUT/REVIEW_PROMPT.md" <<'PROMPT'
+WERKZEUG: Dieser Diff berührt nur Werkzeug- und Beweis-Code (Test-Gerüste, Beweis-Skripte, Protokolle), den kein Kunde ausführt. Hier blocken nur `sicherheit`, `datenverlust` und `falsch-gruen`. Melde anderes trotzdem, mit ehrlicher Art.
+PROMPT
 fi
 
 # How much reading this bundle actually is. The whole touched FILE is copied, not

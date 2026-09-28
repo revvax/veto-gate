@@ -134,10 +134,15 @@ state)
       END{ if(n>0) printf "%d", (s*100)/n; else printf "-1" }' 2>/dev/null)
     case "$CARRY" in ''|*[!0-9-]*) CARRY=-1;; esac
   fi
+  # prev_diff — WHERE the last round's diff lies, so converge.sh can tell the lines the
+  # fix wrote new from the lines that already stood there. Same ownership rule as the
+  # carry measure: only a round this sequence still owns, else empty (= not measurable).
+  PDF=""; [ "$N" -gt 0 ] && [ -f "$DF" ] && PDF="$DF"
   printf '%s' "$ST" | jq -c --arg seq "$SEQ" --argjson n "$N" --argjson t "$TOT" \
     --argjson pc "$PREVCH" --argjson sh "$SHARED" --argjson pf "$PREVF" --argjson cy "$CARRY" \
+    --arg pdf "$PDF" \
     '{seq:$seq, round:($t+1), rounds:$n, prev_changed:$pc, shared_files:$sh, prev_files:$pf,
-      carry_pct:$cy, prior:[.rounds[] | {round, result, changed, findings}]}' 2>/dev/null \
+      carry_pct:$cy, prev_diff:$pdf, prior:[.rounds[] | {round, result, changed, findings}]}' 2>/dev/null \
     || printf '{"seq":"%s","round":1,"rounds":0,"prev_changed":-1,"shared_files":0,"prev_files":0,"carry_pct":-1,"prior":[]}\n' "$SEQ"
   ;;
 record)

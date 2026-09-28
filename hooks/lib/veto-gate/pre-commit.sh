@@ -113,7 +113,11 @@ esac
 LOCKL=$(bash "${VETO_GATE_DIFFSIZE_BIN:-$LIB/diff-size.sh}" --diff "$DIFF" --lockfile-lines 2>/dev/null)
 case "${LOCKL:-}" in ''|*[!0-9]*) LOCKL=0;; esac
 [ "$LOCKL" -gt "$CHANGED" ] && LOCKL="$CHANGED"
-CODEL=$(( CHANGED - LOCKL ))
+# re-indented lines are subtracted the same way and for the same reason (see diff-size.sh)
+WSL=$(bash "${VETO_GATE_DIFFSIZE_BIN:-$LIB/diff-size.sh}" --diff "$DIFF" --ws-lines 2>/dev/null)
+case "${WSL:-}" in ''|*[!0-9]*) WSL=0;; esac
+[ "$WSL" -gt $(( CHANGED - LOCKL )) ] && WSL=$(( CHANGED - LOCKL ))
+CODEL=$(( CHANGED - LOCKL - WSL ))
 if [ "$CODEL" -gt "$MAXL" ]; then
   echo "⛔ VETO-GATE (pre-commit): Diff zu groß ($CODEL geänderte Code-Zeilen > $MAXL) — bitte aufteilen: ein Thema = ein Commit. Notausgang (bewusst): --no-verify" >&2
   exit 1
@@ -189,6 +193,25 @@ if ! BUNDLE=$(bash "${VETO_GATE_PACKDIFF_BIN:-$LIB/pack-diff.sh}" --diff "$DIFF"
   exit 1
 fi
 
+# Konvergenz, round 1 only — this channel keeps no sequence history. The two rules that
+# need none still apply, exactly as in the gate: false red never blocks, and tool code
+# blocks only on the hard kinds. The role comes from the same triage as there. Every
+# failure here leaves the verdict as it was (strict).
+ROLE=normal
+if NAMESF=$(mktemp "${TMPDIR:-/tmp}/veto-gate-pcnames.XXXXXX" 2>/dev/null); then
+  git diff --cached --name-only > "$NAMESF" 2>/dev/null
+  ROLE=$(bash "$LIB/triage.sh" --names "$NAMESF" --changed "$CHANGED" --cfg "$CFG" 2>/dev/null | jq -r '.role // "normal"' 2>/dev/null)
+  rm -f "$NAMESF"
+fi
+case "$ROLE" in werkzeug) ;; *) ROLE=normal;; esac
+converge1(){ # $1 verdict json → stdout converged verdict
+  local vf out; vf=$(mktemp "${TMPDIR:-/tmp}/veto-gate-pcconv.XXXXXX" 2>/dev/null) || { printf '%s' "$1"; return 0; }
+  printf '%s' "$1" > "$vf"
+  out=$(bash "$LIB/converge.sh" --verdict "$vf" --round 1 --role "$ROLE" 2>/dev/null); rm -f "$vf"
+  if [ -n "$out" ]; then printf '%s' "$out"; else printf '%s' "$1"; fi; }
+report_rest(){  # $1 verdict json — what no longer blocks is still SAID
+  printf '%s' "$1" | jq -r '.demoted[]? | "ⓘ VETO-GATE (pre-commit): nicht blockierend [\(.id)] (\(.art)) \(.claim // "") — \(.grund)"' >&2 2>/dev/null || true; }
+
 report_findings(){  # $1 verdict json, $2 reviewer name, $3 count
   {
     echo "⛔ VETO-GATE (pre-commit): $2 fand $3 blockierende(s) Problem(e) — Commit geblockt."
@@ -203,6 +226,7 @@ report_findings(){  # $1 verdict json, $2 reviewer name, $3 count
 PRE=$(jq -r 'if type=="object" then (.prechecker // "none") else "none" end' "$CFG" 2>/dev/null) || PRE=none
 if [ "$PRE" != none ] && [ -n "$PRE" ]; then
   if PV=$(bash "${VETO_GATE_PRECHECK_BIN:-$LIB/minimax-diff-review.sh}" --diff "$DIFF" 2>/dev/null); then
+    PV=$(converge1 "$PV"); report_rest "$PV"
     PB=$(printf '%s' "$PV" | jq '.blocking | length' 2>/dev/null) || PB=0
     case "$PB" in ''|*[!0-9]*) PB=0;; esac
     if [ "$PB" -gt 0 ]; then report_findings "$PV" "Vorprüfer ($PRE)" "$PB"; exit 1; fi
@@ -221,6 +245,7 @@ if ! VERDICT=$(VETO_GATE_TIMEOUT="${VETO_GATE_TIMEOUT:-$CFG_TO}" VETO_GATE_TIMEO
   echo "⚠ VETO-GATE (pre-commit): Prüfer nicht erreichbar — dieser Commit ist UNGEPRÜFT durchgelaufen." >&2
   exit 0
 fi
+VERDICT=$(converge1 "$VERDICT"); report_rest "$VERDICT"
 BLK=$(printf '%s' "$VERDICT" | jq '.blocking | length' 2>/dev/null) || BLK=0
 case "$BLK" in ''|*[!0-9]*) BLK=0;; esac
 if [ "$BLK" -gt 0 ]; then report_findings "$VERDICT" "Codex" "$BLK"; exit 1; fi
